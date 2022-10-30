@@ -1,7 +1,41 @@
-use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
+// use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::time::FixedTimestep;
 use rand::prelude::random;
+
+fn main() {
+    App::new()
+        // Setup
+        .add_event::<GameOverEvent>()
+        .insert_resource(WindowDescriptor {
+            title: "Bird!".to_string(),
+            width: 500.0,
+            height: 500.0,
+            ..default()
+        })
+        // .insert_resource(WallVec::default())
+        .add_startup_system(setup_camera)
+        .add_startup_system(spawn_bird)
+        .add_startup_system(spawn_text)
+        // Loop
+        .add_system(bird_movement_input)
+        .add_system(movement)
+        .add_system(bird_movement.after(bird_movement_input).after(movement))
+        .add_system(wall_despawner)
+        // Post-update
+        .add_system_to_stage(CoreStage::PostUpdate, collision)
+        .add_system_to_stage(CoreStage::PostUpdate, game_over.after(collision))
+        .add_system_to_stage(CoreStage::PostUpdate, entity_transform_update)
+        .add_system_set(
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::step(2.5))
+                .with_system(wall_spawner),
+        )
+        .add_plugins(DefaultPlugins)
+        // .add_plugin(LogDiagnosticsPlugin::default())
+        // .add_plugin(FrameTimeDiagnosticsPlugin::default())
+        .run();
+}
 
 /** Components **/
 
@@ -54,40 +88,7 @@ const MAX_GAP_SIZE: f32 = 350.0;
 const BIRD_COLOR: Color = Color::rgb(0.7, 0.7, 0.7);
 const WALL_COLOR: Color = Color::rgb(0.0, 0.0, 0.0);
 
-fn main() {
-    App::new()
-        // Setup
-        .add_event::<GameOverEvent>()
-        .insert_resource(WindowDescriptor {
-            title: "Bird!".to_string(),
-            width: 500.0,
-            height: 500.0,
-            ..default()
-        })
-        // .insert_resource(WallVec::default())
-        .add_startup_system(setup_camera)
-        .add_startup_system(spawn_bird)
-        // Loop
-        .add_system(bird_movement_input)
-        .add_system(movement)
-        .add_system(bird_movement.after(bird_movement_input).after(movement))
-        // Post-update
-        .add_system_to_stage(CoreStage::PostUpdate, collision)
-        .add_system_to_stage(CoreStage::PostUpdate, game_over.after(collision))
-        .add_system_to_stage(CoreStage::PostUpdate, entity_transform_update)
-        .add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(2.5))
-                .with_system(wall_spawner)
-                .with_system(wall_despawner),
-        )
-        .add_plugins(DefaultPlugins)
-        // .add_plugin(LogDiagnosticsPlugin::default())
-        // .add_plugin(FrameTimeDiagnosticsPlugin::default())
-        .run();
-}
-
-// Setup systems
+/** Setup systems */
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn_bundle(Camera2dBundle {
@@ -121,7 +122,38 @@ fn spawn_bird(mut commands: Commands) {
         .insert(Size::square(30.0));
 }
 
-// Looping Systems
+fn spawn_text(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn_bundle(TextBundle {
+        text: Text {
+            sections: vec![TextSection {
+                value: "0".to_string(),
+                style: TextStyle {
+                    color: Color::WHITE,
+                    font: asset_server.load("typeface/Square.ttf"),
+                    font_size: 80.0,
+                },
+            }],
+            alignment: TextAlignment::TOP_CENTER,
+        },
+        style: Style {
+            position: UiRect {
+                top: Val::Px(100.0),
+                left: Val::Px(225.0),
+                ..default()
+            },
+            position_type: PositionType::Absolute,
+            ..default()
+        },
+        ..default()
+    });
+    // .insert(Position(Vec2 { x: 250.0, y: 250.0 }))
+    // .insert(Size {
+    //     width: 1.0,
+    //     height: 1.0,
+    // });
+}
+
+/** Looping Systems */
 
 fn wall_spawner(mut commands: Commands, windows: Res<Windows>) {
     let window = windows.get_primary().unwrap();
@@ -178,16 +210,28 @@ fn wall_spawner(mut commands: Commands, windows: Res<Windows>) {
 }
 
 fn wall_despawner(
-    mut windows: Res<Windows>,
     mut commands: Commands,
-    q: Query<(Entity, &Position), With<Wall>>,
+    windows: Res<Windows>,
+    walls: Query<(Entity, &Position), With<Wall>>,
+    mut text_query: Query<&mut Text>,
 ) {
     let window = windows.get_primary().unwrap();
 
-    for (ent, pos) in q.iter() {
-        if pos.0.x < -window.width() / 2.0 {
-            commands.entity(ent).despawn();
+    for mut text in &mut text_query {
+        // let text = text_query.iter().next().unwrap();
+
+        let mut despawn_count = 0;
+
+        for (ent, pos) in walls.iter() {
+            if pos.0.x < -window.width() / 2.0 {
+                commands.entity(ent).despawn();
+                despawn_count += 1;
+            }
         }
+
+        let value = text.sections[0].value.parse::<i32>().unwrap();
+
+        text.sections[0].value = format!("{}", value + despawn_count / 2)
     }
 }
 
@@ -252,11 +296,16 @@ fn collision(
 fn game_over(
     mut commands: Commands,
     mut reader: EventReader<GameOverEvent>,
-    mut walls: Query<Entity, With<Wall>>,
+    walls: Query<Entity, With<Wall>>,
+    mut text_query: Query<&mut Text>,
 ) {
     if reader.iter().next().is_some() {
         for wal in walls.iter() {
             commands.entity(wal).despawn();
+        }
+
+        for mut text in &mut text_query {
+            text.sections[0].value = "0".to_string();
         }
     }
 }
